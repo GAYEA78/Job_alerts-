@@ -1,0 +1,40 @@
+name: Job alerts
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"     # every 30 minutes
+  workflow_dispatch:            # adds a manual "Run workflow" button
+
+permissions:
+  contents: write
+
+concurrency:
+  group: job-alerts
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run job alerts
+        env:
+          JOB_ALERT_HOME: ${{ github.workspace }}/state
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+          USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
+        run: python3 job_alert.py
+
+      - name: Save memory back to the repo
+        if: always()
+        run: |
+          git config user.name "job-alert-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/seen_jobs.json state/dead_boards.json 2>/dev/null || true
+          git commit -m "update job memory [skip ci]" || echo "nothing to commit"
+          git pull --rebase origin ${{ github.ref_name }} || true
+          git push || true
