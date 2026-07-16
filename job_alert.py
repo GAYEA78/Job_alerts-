@@ -28,8 +28,54 @@ HOURS_LOOKBACK = 48          # how recent counts as "newly posted"
 EMAIL_WHEN_EMPTY = False     # email even when nothing new?
 MAX_EMAIL_JOBS = 120         # cap per email; extras arrive next run
 
-LOCATION_KEYWORDS = ["new york", "ny", "nyc", "new jersey", "nj"]
+# Where you want to work. The East Coast states below drive everything:
+# the location filter plus the USAJobs / Adzuna / The Muse searches.
+# Delete any state you don't want (PA, VT and WV are included even
+# though they're inland, since most people count them as East Coast).
+EAST_COAST_STATES = {
+    "ME": "Maine", "NH": "New Hampshire", "VT": "Vermont",
+    "MA": "Massachusetts", "RI": "Rhode Island", "CT": "Connecticut",
+    "NY": "New York", "NJ": "New Jersey", "PA": "Pennsylvania",
+    "DE": "Delaware", "MD": "Maryland", "DC": "District of Columbia",
+    "VA": "Virginia", "WV": "West Virginia", "NC": "North Carolina",
+    "SC": "South Carolina", "GA": "Georgia", "FL": "Florida",
+}
+
+# Metro names that job boards often list without a state attached.
+EAST_COAST_CITIES = [
+    "nyc", "new york city", "brooklyn", "manhattan", "queens",
+    "long island", "albany", "buffalo", "rochester",
+    "jersey city", "hoboken", "newark", "princeton",
+    "boston", "cambridge", "philadelphia", "philly", "pittsburgh",
+    "washington dc", "baltimore", "arlington", "alexandria",
+    "reston", "mclean", "tysons", "richmond", "virginia beach",
+    "norfolk", "raleigh", "durham", "charlotte", "charleston",
+    "atlanta", "savannah", "miami", "fort lauderdale", "orlando",
+    "tampa", "jacksonville", "providence", "hartford", "stamford",
+    "new haven", "wilmington", "portsmouth", "burlington",
+]
+
+LOCATION_KEYWORDS = ([s.lower() for s in EAST_COAST_STATES.values()]
+                     + EAST_COAST_CITIES)
 INCLUDE_REMOTE = True        # include remote / hybrid / WFH US jobs
+
+# The Muse only returns jobs for locations you explicitly ask for,
+# so list the metros you care about (unknown names are ignored).
+MUSE_LOCATIONS = [
+    "New York, NY", "Jersey City, NJ", "Boston, MA",
+    "Philadelphia, PA", "Pittsburgh, PA", "Washington, DC",
+    "Baltimore, MD", "Arlington, VA", "Richmond, VA",
+    "Charlotte, NC", "Raleigh, NC", "Durham, NC", "Atlanta, GA",
+    "Miami, FL", "Orlando, FL", "Tampa, FL", "Jacksonville, FL",
+    "Hartford, CT", "Stamford, CT", "Providence, RI",
+    "Portland, ME", "Manchester, NH", "Burlington, VT",
+    "Charleston, SC", "Wilmington, DE", "Flexible / Remote",
+]
+
+# Each Adzuna search below costs one API call per run. On the free
+# tier with the 30-minute schedule that adds up, so trim this list
+# (or slow the cron) if Adzuna starts returning rate-limit errors.
+ADZUNA_SEARCHES = list(EAST_COAST_STATES.values())
 
 
 # Auto-discovery reads the Simplify feed and extracts every company
@@ -423,12 +469,25 @@ NON_US_HINTS = ("canada", "toronto", "vancouver", "uk", "united kingdom",
                 "netherlands", "spain", "israel")
 
 
+# Two-letter state codes are matched case-sensitively ("Boston, MA",
+# "Miami FL", even "N.Y.") so that lowercase particles in foreign
+# place names ("Ciudad de Mexico", "Ile-de-France") never trip the
+# Delaware "DE", and "Tampa"/"Manhattan" never trip "PA"/"MA".
+_STATE_CODE_RE = re.compile(
+    "|".join(r"(?<![A-Za-z])" + r"\.?".join(code) + r"\.?(?![A-Za-z])"
+             for code in EAST_COAST_STATES))
+
+
 def location_matches(locations):
     if not LOCATION_KEYWORDS:
         return True
     for loc in locations or []:
-        l = str(loc).lower()
+        raw = str(loc)
+        l = raw.lower()
         if any(_word(l, kw) for kw in LOCATION_KEYWORDS):
+            return True
+        if (_STATE_CODE_RE.search(raw)
+                and not any(h in l for h in NON_US_HINTS)):
             return True
         if INCLUDE_REMOTE and any(h in l for h in REMOTE_HINTS):
             if not any(h in l for h in NON_US_HINTS):
@@ -687,10 +746,8 @@ def src_muse(seen, cutoff):
     """The Muse public API - keyless, has an explicit Entry Level tag."""
     jobs = []
     for page in (0, 1, 2):
-        params = [("level", "Entry Level"), ("page", page),
-                  ("location", "New York, NY"),
-                  ("location", "Jersey City, NJ"),
-                  ("location", "Flexible / Remote")]
+        params = ([("level", "Entry Level"), ("page", page)]
+                  + [("location", loc) for loc in MUSE_LOCATIONS])
         data = fetch_json("https://www.themuse.com/api/public/jobs?"
                           + urlencode(params))
         for j in data.get("results", []):
@@ -766,8 +823,8 @@ def src_usajobs(seen, cutoff):
         return []
     params = urlencode({
         "JobCategoryCode": "2210;1550;0854",   # IT / CS / computer eng.
-        "LocationName": "New York;New Jersey",
-        "ResultsPerPage": 50, "SortField": "opendate",
+        "LocationName": ";".join(EAST_COAST_STATES.values()),
+        "ResultsPerPage": 100, "SortField": "opendate",
         "SortDirection": "desc"})
     req = urllib.request.Request(
         "https://data.usajobs.gov/api/search?" + params,
@@ -801,7 +858,7 @@ def src_adzuna():
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         return []
     jobs = []
-    searches = ["New York, NY", "New Jersey"] + ([""] if INCLUDE_REMOTE else [])
+    searches = ADZUNA_SEARCHES + ([""] if INCLUDE_REMOTE else [])
     for where in searches:
         params = {"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY,
                   "results_per_page": 50, "max_days_old": 3,
