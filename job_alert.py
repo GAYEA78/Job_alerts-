@@ -119,7 +119,9 @@ SIMPLIFY_CATEGORIES = []
 
 MIN_TECH_SCORE = 4
 MIN_ENTRY_SCORE = 2
-YEARS_REJECT = 3
+YEARS_REJECT = 1     # reject any posting demanding >= this many years
+                     # ("2-3 years" counts as 2, "1+ years" as 1).
+                     # 1 = only true zero-experience jobs get through.
 NEAR_MISS_MARGIN = 2         # how close a "no" must be for LLM rescue
 DESCRIPTION_FETCH_LIMIT = 8  # full descriptions per company per run
 EXTRA_EXCLUDE_KEYWORDS = []
@@ -303,9 +305,13 @@ NONTECH_WORDS = (
     "sales quota",
 )
 
+_YEAR_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+               "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_YEAR_NUM = r"(?:\d{1,2}|" + "|".join(_YEAR_WORDS) + r")"
 YEARS_RE = re.compile(
-    r"\b(\d{1,2})\s*(?:\+\s*)?(?:-|–|to)\s*(\d{1,2})\s*\+?\s*years?"
-    r"|\b(\d{1,2})\s*\+?\s*years?", re.I)
+    r"\b(" + _YEAR_NUM + r")\s*(?:\+\s*)?(?:-|–|—|to)\s*"
+    r"(" + _YEAR_NUM + r")\s*\+?\s*y(?:ea)?rs?\b"
+    r"|\b(" + _YEAR_NUM + r")\s*\+?\s*y(?:ea)?rs?\b", re.I)
 
 
 def requires_advanced_degree(text):
@@ -322,13 +328,16 @@ def title_excluded(title):
 def min_years_required(text):
     found = []
     for m in YEARS_RE.finditer(text):
-        value = m.group(1) or m.group(3)
+        value = (m.group(1) or m.group(3)).lower()
         window = text[max(0, m.start() - 40):m.end() + 60].lower()
         if "experience" in window or "exp." in window:
-            try:
-                found.append(int(value))
-            except ValueError:
-                pass
+            years = _YEAR_WORDS.get(value)
+            if years is None:
+                try:
+                    years = int(value)
+                except ValueError:
+                    continue
+            found.append(years)
     return min(found) if found else None
 
 
@@ -361,7 +370,7 @@ def entry_score(title, description):
     if LEVEL_ONE_RE.search(t):
         score += 2
     yrs = min_years_required(d)
-    if yrs is not None and yrs <= 2:
+    if yrs == 0:                       # e.g. "0-2 years" welcomes 0 yoe
         score += 3
     if BACHELOR_RE.search(d):
         score += 2 if yrs is None else 1
@@ -409,7 +418,8 @@ LLM_QUESTION = (
     "degree in Computer Science (no full-time work experience). For each "
     "numbered posting decide: would this person reasonably qualify for "
     "and apply to it? qualified=true only if it is a technical role, "
-    "entry-level (0-2 years / new grad / degree-gated), and not an "
+    "entry-level requiring no prior work experience (0 years / new "
+    "grad / degree-gated; reject if it demands 1+ years), and not an "
     "internship or senior position. Respond with ONLY a JSON array like "
     '[{"n":1,"qualified":true}] and nothing else.'
 )
