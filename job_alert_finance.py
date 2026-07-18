@@ -30,7 +30,7 @@ GMAIL_APP_PASSWORD = "PASTE-APP-PASSWORD-HERE"
 # Everyone who should receive THESE (finance/business) job emails.
 # Sending still happens from GMAIL_ADDRESS above, so the same
 # GMAIL_APP_PASSWORD secret works for both scripts.
-EMAIL_RECIPIENTS = ["x221gaye@gmail.com, mamiigaye00@gmail.com"]
+EMAIL_RECIPIENTS = ["x221gaye@gmail.com", "mamiigaye00@gmail.com"]
 
 HOURS_LOOKBACK = 48          # how recent counts as "newly posted"
 EMAIL_WHEN_EMPTY = False     # email even when nothing new?
