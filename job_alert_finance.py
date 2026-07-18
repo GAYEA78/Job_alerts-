@@ -138,7 +138,9 @@ YEARS_REJECT = 1     # reject any posting demanding >= this many years
                      # ("2-3 years" counts as 2, "1+ years" as 1).
                      # 1 = only true zero-experience jobs get through.
 NEAR_MISS_MARGIN = 2         # how close a "no" must be for LLM rescue
-DESCRIPTION_FETCH_LIMIT = 8  # full descriptions per company per run
+DESCRIPTION_FETCH_LIMIT = 12  # full descriptions per company per run
+                             # (higher = more jobs whose requirements
+                             # we can actually verify)
 EXTRA_EXCLUDE_KEYWORDS = []
 
 # ==================================================================
@@ -324,10 +326,27 @@ CS_FIELD_RE = re.compile(
 STRONG_ENTRY_RE = re.compile(
     r"new ?grad(uate)?|recent grad(uate)?|entry[ -]?level|"
     r"early[ -]?(in[ -]?)?career|graduate (program|scheme|hire|role)|"
-    r"rotation(al)? program|development program|campus|"
+    r"rotation(al)? program|campus (hire|recruit(ing|ment)?|program)|"
     r"university grad(uate)?|college grad(uate)?|class of 20\d\d|"
     r"full[ -]time analyst|analyst program|20\d\d start|"
     r"no (prior |previous )?(work |professional )?experience", re.I)
+# Only these phrases are trusted to CANCEL a years-of-experience
+# rejection. Deliberately tighter than STRONG_ENTRY_RE: things like
+# "development program" or "early career" show up in benefits blurbs
+# of senior postings and must not rescue them.
+OVERRIDE_ENTRY_RE = re.compile(
+    r"new ?grad(uate)?|recent grad(uate)?|entry[ -]?level|"
+    r"class of 20\d\d|graduate (program|hire)|rotation(al)? program|"
+    r"no (prior |previous )?(work |professional )?experience|"
+    r"0 years", re.I)
+# Titles that themselves advertise entry level. When a source only
+# gives us a snippet (or no description), this is the only evidence
+# we will trust.
+TITLE_JUNIOR_RE = re.compile(
+    r"\b(junior|jr|trainee|apprentice|graduate)\b", re.I)
+# Below this many characters of description we assume we have NOT
+# seen the full requirements, so we refuse to guess.
+DESC_TRUST_CHARS = 600
 MED_ENTRY_RE = re.compile(r"\b(junior|jr|associate|apprentice|trainee)\b", re.I)
 LEVEL_ONE_RE = re.compile(
     r"\b(analyst|consultant|specialist|associate|coordinator|"
@@ -392,10 +411,17 @@ def title_excluded(title):
 
 def min_years_required(text):
     found = []
+    hints = ("experience", "exp", "background", "years in", "yrs in",
+             "track record", "professional", "working in")
     for m in YEARS_RE.finditer(text):
+        # "4 year degree" / "2 years of college" are not experience.
+        tail = text[m.end():m.end() + 16].lstrip().lower()
+        if tail.startswith(("degree", "college", "universit", "school",
+                            "undergrad", "program")):
+            continue
         value = (m.group(1) or m.group(3)).lower()
         window = text[max(0, m.start() - 40):m.end() + 60].lower()
-        if "experience" in window or "exp." in window:
+        if any(h in window for h in hints):
             years = _YEAR_WORDS.get(value)
             if years is None:
                 try:
@@ -438,7 +464,8 @@ def entry_score(title, description):
     if yrs == 0:                       # e.g. "0-2 years" welcomes 0 yoe
         score += 3
     if BACHELOR_RE.search(d):
-        score += 2 if yrs is None else 1
+        score += 1     # supporting evidence only - "degree required"
+                       # alone never proves a role is entry level
     return score
 
 
@@ -467,7 +494,18 @@ def local_verdict(job):
         return "no"
     yrs = min_years_required(desc.lower())
     if (yrs is not None and yrs >= YEARS_REJECT
-            and not STRONG_ENTRY_RE.search(title + " " + desc)):
+            and not OVERRIDE_ENTRY_RE.search(title + " " + desc)):
+        return "no"
+    # If the source only gave us a snippet (Adzuna truncates, and we
+    # only fetch full descriptions for a few jobs per board), we may
+    # never have seen a "5+ years required" line. Only trust snippet
+    # jobs when the title or the visible text itself proves entry
+    # level (new grad / entry-level wording, junior-style title, an
+    # "Analyst I" title, or an explicit 0 years like "0-2 years").
+    if (len(desc) < DESC_TRUST_CHARS and yrs != 0 and not (
+            STRONG_ENTRY_RE.search(title + " " + desc)
+            or TITLE_JUNIOR_RE.search(title)
+            or LEVEL_ONE_RE.search(title))):
         return "no"
     ts, es = tech_score(title, desc), entry_score(title, desc)
     if ts >= MIN_TECH_SCORE and es >= MIN_ENTRY_SCORE:
@@ -485,13 +523,18 @@ LLM_QUESTION = (
     "Science in Finance and Technology Management from NYU, graduating "
     "May 2027, with no full-time work experience. For each numbered "
     "posting decide: would she reasonably qualify for and apply to it? "
-    "qualified=true only if it is a finance, banking, risk, business, "
-    "product, operations, project, or data/business-analyst type role; "
-    "entry-level requiring no prior full-time experience (0 years / "
-    "new grad / class-of-2027 friendly; reject if it demands 1+ "
-    "years); not an internship or senior position; and it does not "
-    "require an engineering or CS degree, an MBA, a CPA, or a nursing/"
-    "legal/medical license. Respond with ONLY a JSON array like "
+    "Read the description's requirements carefully. qualified=true "
+    "ONLY if ALL of these hold: it is a finance, banking, risk, "
+    "business, product, operations, project, or data/business-analyst "
+    "type role; the posting is genuinely entry-level (0 years, '0-2 "
+    "years', new grad, or class-of-2027 friendly) - if it states or "
+    "implies 1+ years of required professional experience anywhere, "
+    "answer false; it is not an internship or senior position; and it "
+    "does not require an engineering or CS degree, an MBA, a CPA, or "
+    "a nursing/legal/medical license. If the description is missing "
+    "or too short to verify the experience requirement, answer false "
+    "unless the title itself says new grad, graduate, junior, or "
+    "entry level. Respond with ONLY a JSON array like "
     '[{"n":1,"qualified":true}] and nothing else.'
 )
 
@@ -524,7 +567,7 @@ def llm_classify(jobs):
             lines.append(
                 f"{i}. TITLE: {j['title']} | COMPANY: {j['company']} | "
                 f"LOCATION: {', '.join(j['locations'])}\n"
-                f"DESCRIPTION: {j.get('description', '')[:1200]}\n")
+                f"DESCRIPTION: {j.get('description', '')[:2500]}\n")
         try:
             reply = _ask_claude("\n".join(lines))
             reply = re.sub(r"```(json)?", "", reply).strip()
