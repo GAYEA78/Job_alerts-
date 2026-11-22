@@ -1,0 +1,19 @@
+name: Tests
+on:
+  push:
+    paths-ignore: ['state/**', '**.md']
+  pull_request:
+    paths-ignore: ['state/**', '**.md']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+      - name: Exercise both profiles without network or email
+        run: python -m job_alerts.runner --input tests/sample_jobs.json --dry-run

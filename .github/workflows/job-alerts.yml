@@ -2,53 +2,102 @@ name: Job alerts
 
 on:
   schedule:
-    - cron: "*/30 * * * *"     # every 30 minutes
-  workflow_dispatch:            # adds a manual "Run workflow" button
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview only: no email and no delivery history changes'
+        type: boolean
+        default: true
+      track_profile:
+        description: 'Optional application tracking profile'
+        type: choice
+        options: ['none', 'tech', 'finance']
+        default: 'none'
+      track_url:
+        description: 'Job URL to update (when tracking)'
+        type: string
+      track_status:
+        description: 'Application status'
+        type: choice
+        options: ['saved', 'applied', 'interviewing', 'rejected', 'dismissed', 'reset']
+        default: 'saved'
 
 permissions:
   contents: write
 
 concurrency:
   group: job-alerts
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      JOB_ALERT_HOME: ${{ github.workspace }}/state
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      TECH_EMAIL_RECIPIENTS: ${{ secrets.TECH_EMAIL_RECIPIENTS }}
+      FINANCE_EMAIL_RECIPIENTS: ${{ secrets.FINANCE_EMAIL_RECIPIENTS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+      ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+      USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run job alerts (CS - you)
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Test matching, sources and delivery
+        run: python -m unittest discover -s tests -v
+      - name: Cache window
+        id: window
+        run: echo "id=$(python -c 'import time; print(int(time.time() // 21600))')" >> "$GITHUB_OUTPUT"
+      - name: Restore source cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: state/cache
+          key: job-sources-v2-${{ runner.os }}-${{ steps.window.outputs.id }}
+          restore-keys: job-sources-v2-${{ runner.os }}-
+      - name: Update application status
+        if: github.event_name == 'workflow_dispatch' && inputs.track_profile != 'none'
         env:
-          JOB_ALERT_HOME: ${{ github.workspace }}/state
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
-          USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
-        run: python3 job_alert.py
-
-      - name: Run job alerts (Finance - sister)
-        if: always()            # her run still happens if yours errors
+          TRACK_PROFILE: ${{ inputs.track_profile }}
+          TRACK_URL: ${{ inputs.track_url }}
+          TRACK_STATUS: ${{ inputs.track_status }}
+        run: python track_job.py "$TRACK_PROFILE" "$TRACK_URL" "$TRACK_STATUS"
+      - name: Collect once and process both profiles
+        if: github.event_name == 'schedule' || inputs.track_profile == 'none'
         env:
-          JOB_ALERT_HOME: ${{ github.workspace }}/state
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
-          USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
-        run: python3 job_alert_finance.py
-
-      - name: Save memory back to the repo
-        if: always()
+          PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
+          if [ "$PREVIEW" = "true" ]; then
+            python -m job_alerts.runner --profile all --dry-run
+          else
+            python -m job_alerts.runner --profile all --send
+          fi
+      - name: Persist delivery and application state
+        if: always() && (github.event_name == 'schedule' || !inputs.dry_run || inputs.track_profile != 'none')
+        run: |
+          if [ ! -f state/alerts_v2.json ]; then
+            exit 0
+          fi
           git config user.name "job-alert-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add state/seen_jobs.json state/dead_boards.json \
-                  state/seen_jobs_finance.json state/dead_boards_finance.json \
-                  2>/dev/null || true
-          git commit -m "update job memory [skip ci]" || echo "nothing to commit"
-          git pull --rebase origin ${{ github.ref_name }} || true
-          git push || true
+          git add state/alerts_v2.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Update alert delivery state [skip ci]"
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$GITHUB_REF_NAME" || exit 1
+            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+              exit 0
+            fi
+          done
+          echo "::error::Delivery history could not be saved. Inspect this run before retrying to avoid duplicate emails."
+          exit 1
