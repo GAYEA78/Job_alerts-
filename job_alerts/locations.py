@@ -24,7 +24,10 @@ def state_codes(text):
     """Resolve explicit names/codes before using a short, unambiguous city list."""
     if FOREIGN.search(text):
         return set()
-    codes = set()
+    # An explicit state code outranks a city alias: Brooklyn, OH is in Ohio.
+    codes={code for code in STATES if re.search(r'(?<![A-Za-z])'+code+r'(?![A-Za-z])',text)}
+    if codes:
+        return codes
     for code, name in STATES.items():
         if re.search(r"(?<![A-Za-z])" + code + r"(?![A-Za-z])", text):
             codes.add(code)
@@ -55,7 +58,7 @@ def matching_locations(locations, ny_nj_only=None):
                 continue
             codes = state_codes(part)
             if codes & allowed:
-                accepted.append(part)
+                accepted.append(', '.join(STATES[c] for c in sorted(codes & allowed)) if strict and codes-allowed else part)
                 continue
             if strict:
                 continue

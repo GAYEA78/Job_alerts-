@@ -136,15 +136,18 @@ def evaluate(job, profile, now):
     if years is not None and years > settings.MAX_REQUIRED_YEARS:
         return None  # Entry-level wording never cancels an explicit requirement.
     p=PROFILES[profile]
+    has_role=any(has_word(title,n) for n in p['nouns'])
     title_fit=any(has_word(title,t) for t in p['titles'])
     title_fit=title_fit or (any(has_word(title,n) for n in p['nouns']) and any(has_word(title,q) for q in p['qualifiers']))
     if profile=='tech' and re.search(r'\b(sql|sql server|database|business intelligence) (developer|administrator|analyst)\b',title,re.I):
         title_fit=True
+    if profile=='tech' and job.get('entry_verified') and has_role and job.get('category') in ('Software','Software Engineering','AI/ML/Data','Data Science, AI & Machine Learning'):
+        title_fit=True
     skills=[s for s in p['skills'] if has_word(desc,s)]
-    if not title_fit and len(skills)<3:
+    if not title_fit and not (profile=='tech' and has_role and len(skills)>=3 and re.search(p['degree_pattern'],desc,re.I)):
         return None
     # Business/finance scoring must not admit software roles merely mentioning SQL.
-    if profile=='finance' and re.search(r'\b(software|mlops|machine learning|devops|backend|frontend) (engineer|developer)\b',title,re.I):
+    if profile=='finance' and re.search(r'\b(engineer|engineering|developer|programmer|scientist|technical staff)\b',title,re.I):
         return None
     if profile=='tech' and not title_fit and not re.search(p['degree_pattern'],desc,re.I):
         return None

@@ -58,6 +58,11 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(matching_locations(['New York, NY / San Francisco, CA']),['New York, NY'])
         self.assertEqual(matching_locations(['New York, NY or London, UK']),['New York, NY'])
 
+    def test_explicit_other_state_beats_ny_city_alias(self):
+        for location in ('Brooklyn, OH','Manhattan, KS','New York, OH','Jersey City, CA'):
+            self.assertFalse(location_matches([location]))
+        self.assertEqual(matching_locations(['New York, NY, San Francisco, CA']),['New York'])
+
     def test_new_grad_staff_title(self):
         self.assertIsNotNone(evaluate(job('Member of Technical Staff - New Grad'),'tech',NOW))
 
@@ -108,6 +113,15 @@ class MatchingTests(unittest.TestCase):
     def test_finance_roles(self):
         for title in ('Junior Credit Analyst','Graduate Operations Analyst','Product Analyst','Project Coordinator'):
             self.assertIsNotNone(evaluate(job(title,'Entry-level role. No experience required. Excel, SQL and financial analysis.'),'finance',NOW))
+
+    def test_unrelated_finance_titles_do_not_pass_on_generic_skills(self):
+        for title in ('ASO Sales Executive','Community Outreach Coordinator','AI/ML','Engineer New Grad - Rotation Program'):
+            self.assertIsNone(evaluate(job(title,'No experience required. Excel, SQL, financial analysis, business requirements and stakeholder management.'),'finance',NOW))
+
+    def test_curated_new_grad_engineer_routes_to_tech(self):
+        j=job('Engineer New Grad - Evolve - An Apple Services Rotation Program','',entry_verified=True,category='Software',description_complete=False)
+        self.assertIsNotNone(evaluate(j,'tech',NOW))
+        self.assertIsNone(evaluate(j,'finance',NOW))
 
     def test_unknown_experience_labeled(self):
         desc='Build and maintain Python data pipelines and SQL reports for internal users. Collaborate with business teams to document requirements. Bachelor degree in computer science.'
