@@ -50,7 +50,7 @@ def matching_locations(locations, ny_nj_only=None):
     accepted = []
     for original in locations or []:
         # Do not display unrelated alternatives as if they were matches.
-        for part in re.split(r"\s*[;|]\s*", str(original)):
+        for part in re.split(r"\s*[;|]\s*|\s+/\s+|\s+(?:or|and)\s+", str(original), flags=re.I):
             if FOREIGN.search(part):
                 continue
             codes = state_codes(part)

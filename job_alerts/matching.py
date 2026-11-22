@@ -49,7 +49,8 @@ def required_years(text):
             section_optional = False
         if section_optional:
             continue
-        for sentence in re.split(r'(?<=[.!?;])\s+', line):
+        clauses = re.split(r'(?<=[.!?;])\s+|,\s*(?=(?:'+NUM+r'|preferred|required|minimum)\b)|\s+(?:and|but)\s+(?='+NUM+r'\b)', line, flags=re.I)
+        for sentence in clauses:
             alternatives = []
             for clause in re.split(r'\s+or\s+', sentence):
                 if OPTIONAL.search(clause):

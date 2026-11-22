@@ -54,6 +54,10 @@ class MatchingTests(unittest.TestCase):
     def test_only_matched_locations_displayed(self):
         self.assertEqual(matching_locations(['New York, NY','Boston, MA','London, UK']),['New York, NY'])
 
+    def test_mixed_location_string(self):
+        self.assertEqual(matching_locations(['New York, NY / San Francisco, CA']),['New York, NY'])
+        self.assertEqual(matching_locations(['New York, NY or London, UK']),['New York, NY'])
+
     def test_new_grad_staff_title(self):
         self.assertIsNotNone(evaluate(job('Member of Technical Staff - New Grad'),'tech',NOW))
 
@@ -68,6 +72,10 @@ class MatchingTests(unittest.TestCase):
         desc='Bachelor degree in computer science. One year of experience preferred, not required.'
         self.assertIsNone(required_years(desc))
         self.assertIsNotNone(evaluate(job(desc=desc),'tech',NOW))
+
+    def test_required_and_preferred_same_sentence(self):
+        self.assertEqual(required_years('Requires 3 years of experience, 5 years preferred.'),3)
+        self.assertEqual(required_years('Requires 3 years of experience and 5 years preferred.'),3)
 
     def test_campus_cannot_override_experience(self):
         desc='Bachelor degree in computer science. Requires 5 years of software development experience. Our campus offers free parking.'
