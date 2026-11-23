@@ -28,7 +28,19 @@ location field does not identify NY/NJ; it is intentional in strict mode.
 - Software, data, AI/ML/MLOps, cloud, security, QA, IT/application support,
   implementation, business systems, technology risk, product and related roles.
 - Finance, banking, credit, risk, compliance, business analytics, operations,
-  product, project coordination, pricing, strategy and related roles.
+  product, project coordination, pricing, strategy, assurance and related roles.
+- Every collected job is checked independently against both profiles, regardless
+  of its source. Suitable analyst, consulting, business and quantitative roles can
+  appear in both digests, with an “Also matches” explanation. The Actions summary
+  reports `shared_matches`. Collection and per-profile delivery history stay separate.
+- `INCLUDE_CROSSOVER_ROLES = True` enables broader matching by default. A finance
+  analyst accepting a CS/STEM degree or any discipline can also reach tech; an
+  analytical technical role accepting finance/business/quantitative degrees can
+  reach finance. Finance-only or CS-only degree requirements are respected;
+  mandatory CPA coursework prevents a tech match. Unknown eligibility is labeled
+  for review, not treated as proof that a candidate qualifies. Setting this switch
+  to `False` disables the additional crossover rules; naturally shared titles
+  such as business analyst can still match both profiles.
 - Sources: Simplify, Greenhouse, Lever, Ashby, Workday, SmartRecruiters, BambooHR,
   The Muse, Remotive, RemoteOK, and optional Adzuna/USAJobs.
 - Company boards are discovered automatically and rotated fairly; the discovery
@@ -42,12 +54,21 @@ location field does not identify NY/NJ; it is intentional in strict mode.
   You can raise it deliberately. Unknown experience is clearly labeled for review;
   it is not represented as confirmed eligibility.
 - Duplicate copies are merged by canonical job URL, preserving job ID query
-  parameters. Different requisitions with the same company/title remain distinct.
-  Different aggregator URLs may still represent the same opening; title-only
-  suppression is deliberately avoided because it loses legitimate jobs.
+  parameters. Adzuna search/redirect variants are identified by stable ad ID, while
+  the original application link is retained. Existing delivery and application
+  history migrates to that identity without resending previously delivered ads.
+  Complete requirements take priority over longer snippets when merging copies.
+- Listings with the same company and title share one email heading, with each
+  location and application link retained. Different ad IDs may represent separate
+  openings; presentation grouping does not erase them or combine their histories.
 - Scores explain role, location, experience and skill matches. They are heuristic
-  rankings, not probabilities of getting hired. Salary/sponsorship are marked
-  unknown when unavailable. Employer requirements remain authoritative.
+  rankings, not probabilities of getting hired. Incomplete requirements cap a
+  listing at 60/100 and require review; unspecified degree eligibility for a
+  crossover caps it at 70/100. Employer requirements remain authoritative.
+- Adzuna supplies description snippets. Its predicted or unconfirmed salary
+  values are hidden and never used as hard salary filters. Pay marked as listed
+  by the provider is formatted as a readable amount or range. Salary/sponsorship
+  are marked unknown when unavailable; the collector does not invent missing pay.
 
 Settings for skills, graduation year, salary, sponsorship, experience, cadence and
 optional AI live in `settings.py`; profile vocabularies live in

@@ -275,8 +275,10 @@ class Collector:
             data=self.fetch('https://api.adzuna.com/v1/api/jobs/us/search/'+str(page)+'?'+urlencode(params),ttl=21600)
             items=data.get('results') or []
             for j in items:
-                salary={'min':j.get('salary_min'),'max':j.get('salary_max'),'currency':'USD','period':'year'}
-                yield normalize((j.get('company') or {}).get('display_name'),j.get('title'),[(j.get('location') or {}).get('display_name','')],j.get('redirect_url',''),j.get('created'),j.get('description',''),'Adzuna',description_complete=False,salary=salary)
+                flag=j.get('salary_is_predicted')
+                estimated=True if str(flag)=='1' else False if str(flag)=='0' else None
+                salary={'min':j.get('salary_min'),'max':j.get('salary_max'),'currency':'USD','period':'year','is_estimate':estimated,'source':'Adzuna'}
+                yield normalize((j.get('company') or {}).get('display_name'),j.get('title'),[(j.get('location') or {}).get('display_name','')],j.get('redirect_url',''),j.get('created'),j.get('description',''),'Adzuna',description_complete=False,salary=salary,job_id=str(j.get('id','')))
             self.cursor(key,1 if not items or page*50>=data.get('count',0) else page+1)
             self.cursor('adzuna:search',(pos+1)%len(combos))
 

@@ -14,6 +14,7 @@ EAST_COAST_STATES = (
 HOURS_LOOKBACK = 168
 MAX_REQUIRED_YEARS = 0       # Required experience; preferred experience is OK.
 INCLUDE_UNKNOWN_EXPERIENCE = True  # Label uncertain requirements explicitly.
+INCLUDE_CROSSOVER_ROLES = True  # Consider suitable roles from either profile's field.
 MAX_EMAIL_JOBS = 40
 EMAIL_WHEN_EMPTY = False
 DIGEST_MIN_HOURS = 6         # Queue remaining matches; don't drop at the email cap.

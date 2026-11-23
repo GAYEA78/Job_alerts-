@@ -9,7 +9,7 @@ import settings
 from .storage import State, atomic_json
 from .http import HttpClient
 from .sources import Collector
-from .matching import evaluate,merge_jobs
+from .matching import match_profiles,merge_jobs
 from .locations import matching_locations
 from .delivery import configuration,build_email,send_email
 from .semantic import classify
@@ -82,11 +82,13 @@ def main(default_profile=None):
     unhealthy=successful==0 or ratio>=settings.SOURCE_FAILURE_ERROR_RATIO
     summary={'raw_jobs':len(raw),'sources_ok':successful,'sources_failed':failed,'sources_deferred':deferred,'ny_nj_only':settings.NY_NJ_ONLY,'degraded':degraded,'profiles':{},**metrics}
     merged=merge_jobs(raw)
+    matches=match_profiles(merged,now)
+    summary['shared_matches']=sum(len(j.get('matching_profiles',[]))>1 for j in matches['tech'])
     profiles=['tech','finance'] if args.profile=='all' else [args.profile]
     errors=[]
     args.output.mkdir(parents=True,exist_ok=True)
     for profile in profiles:
-        jobs=ranked([result for j in merged if (result:=evaluate(j,profile,now)) is not None])
+        jobs=ranked(matches[profile])
         if send and settings.ENABLE_AI:
             uncertain=[j for j in jobs if j['confidence']=='review']
             verdicts=classify(uncertain,profile,state,now)

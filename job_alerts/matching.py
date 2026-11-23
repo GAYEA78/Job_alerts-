@@ -14,6 +14,98 @@ WORDS = {'zero':0,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,
 NUM = r"(?:\d{1,2}|"+'|'.join(WORDS)+r")"
 YEARS = re.compile(r"\b("+NUM+r")\s*\+?\s*(?:[-–—]|to)?\s*(?:"+NUM+r")?\s*\+?\s*(?:years?|yrs?)\b", re.I)
 OPTIONAL = re.compile(r"\b(preferred|preferably|desirable|nice to have|a plus|bonus|not required)\b", re.I)
+CROSSOVER_ROLE = re.compile(r'\b(analyst|consultant|associate|specialist|coordinator|researcher)\b', re.I)
+BUILD_ROLE = re.compile(r'\b(engineer|engineering|developer|programmer|scientist|technical staff)\b', re.I)
+SPECIALIST_FINANCE = re.compile(r'\b(accountant|accounting|auditor|audit|assurance|tax)\b', re.I)
+DEGREE_FIELDS = {
+    'tech': r'computer science|computer engineering|software engineering|information (?:systems|technology)|\bstem\b|mathematics|\bmath\b|statistics|data science|quantitative|engineering',
+    'finance': r'\bfinance\b|financial|accounting|economics|business|management|information systems|\bstem\b|mathematics|\bmath\b|statistics|quantitative',
+}
+NAMED_DEGREE = re.compile(r'computer science|engineering|information systems|information technology|data science|\bstem\b|mathematics|\bmath\b|statistics|finance|accounting|economics|business|management|biology|chemistry|physics|nursing|law|psychology', re.I)
+
+
+def qualification_lines(text):
+    """Ignore preferred sections when checking mandatory academic restrictions."""
+    optional=False
+    for line in clean_text(text).splitlines():
+        if re.match(r'^(preferred|nice.to.have|bonus) (qualifications|skills|experience)|^ideally',line,re.I):
+            optional=True
+        elif re.match(r'^(required|minimum|basic) (qualifications|skills|experience)|^requirements|^to qualify',line,re.I):
+            optional=False
+        if not optional:
+            for clause in re.split(r'(?<=[.;])\s+',line):
+                if not OPTIONAL.search(clause):
+                    yield clause
+
+
+def degree_compatible(text, profile):
+    """True = explicitly accepted, False = conflicting field, None = unspecified."""
+    result=None
+    for clause in qualification_lines(text):
+        if not re.search(r'\bdegree\b|bachelor|undergraduate',clause,re.I):
+            continue
+        if re.search(r'any (?:academic )?(?:field|discipline|major)|all (?:fields|disciplines|majors)|no (?:college )?degree',clause,re.I):
+            result=True
+        elif re.search(DEGREE_FIELDS[profile],clause,re.I):
+            result=True
+        elif NAMED_DEGREE.search(clause) and not re.search(r'or equivalent (?:work |professional )?experience',clause,re.I):
+            return False
+    return result
+
+
+def accounting_credential_required(text):
+    for clause in qualification_lines(text):
+        if re.search(r'\bcpa\b|certified public accountant',clause,re.I) and re.search(r'requir|must|eligib|course\s?work|credit hours|sufficient course',clause,re.I):
+            return True
+    return False
+
+
+def role_evidence(job, profile):
+    """Match by role and qualifications, independently of the collection source."""
+    title=job.get('title','')
+    desc=job.get('description','')
+    p=PROFILES[profile]
+    has_role=any(has_word(title,n) for n in p['nouns'])
+    direct=any(has_word(title,t) for t in p['titles']) or (has_role and any(has_word(title,q) for q in p['qualifiers']))
+    skills=[s for s in p['skills'] if has_word(desc,s)]
+    degree=degree_compatible(desc,profile)
+    if degree is False:
+        return None
+    if profile=='tech':
+        if accounting_credential_required(desc):
+            return None
+        if re.search(r'\b(sql|sql server|database|business intelligence) (developer|administrator|analyst)\b',title,re.I):
+            direct=True
+        if job.get('entry_verified') and has_role and job.get('category') in ('Software','Software Engineering','AI/ML/Data','Data Science, AI & Machine Learning'):
+            direct=True
+        # Physical infrastructure and financial assurance are not CS evidence.
+        specialist=bool(SPECIALIST_FINANCE.search(title))
+        if specialist and degree is not True and len(skills)<2:
+            direct=False
+        if direct:
+            return 'Role fits Tech & CS',False
+        if has_role and len(skills)>=3 and degree is True:
+            return 'Technical skills and accepted degree',True
+        other=PROFILES['finance']
+        business_role=any(has_word(title,t) for t in other['titles']) or (bool(CROSSOVER_ROLE.search(title)) and any(has_word(title,q) for q in other['qualifiers']))
+        if settings.INCLUDE_CROSSOVER_ROLES and business_role and CROSSOVER_ROLE.search(title) and degree is not False:
+            if degree is True:
+                return 'Crossover: business/finance role accepts a CS, STEM or unrestricted degree',True
+            if re.search(r'\b(analyst|consultant|researcher)\b',title,re.I) or len(skills)>=2:
+                return 'Possible crossover: business/finance role; verify degree eligibility',True
+    else:
+        # A technical title needs affirmative finance/business degree evidence;
+        # employment at a bank or a mention of Excel alone is not enough.
+        if BUILD_ROLE.search(title):
+            analytical=bool(re.search(r'\b(data|analytics|quantitative|quant|financial|risk|trading)\b',title,re.I))
+            if settings.INCLUDE_CROSSOVER_ROLES and analytical and degree is True and len(skills)>=2:
+                return 'Crossover: analytical role accepts a finance/business or quantitative degree',True
+            return None
+        if direct:
+            return 'Role fits Finance & Business',False
+        if settings.INCLUDE_CROSSOVER_ROLES and CROSSOVER_ROLE.search(title) and degree is True and len(skills)>=2:
+            return 'Crossover: business skills and accepted degree',True
+    return None
 
 
 def clean_text(value):
@@ -94,7 +186,15 @@ def canonical_url(url):
 
 
 def job_key(job):
-    return canonical_url(job.get('url',''))
+    url=canonical_url(job.get('url',''))
+    p=urlsplit(url)
+    # Adzuna se/v identify a search or redirect, not a different opening.
+    # Preserve them in the application URL; use the stable ad ID for history.
+    if p.hostname in ('www.adzuna.com','adzuna.com'):
+        match=re.fullmatch(r'/(?:jobs/)?(?:land/ad|details)/(\d+)',p.path)
+        if match:
+            return 'https://www.adzuna.com/land/ad/'+match[1]
+    return url
 
 
 def merge_jobs(jobs):
@@ -104,10 +204,11 @@ def merge_jobs(jobs):
         if not key:
             continue
         job=dict(original)
-        job['url']=key
+        job['url']=canonical_url(job.get('url',''))
         previous=merged.get(key)
         if previous:
-            richer = job if len(job.get('description','')) > len(previous.get('description','')) else previous
+            quality=lambda j:(bool(j.get('description_complete') and j.get('description')),len(j.get('description','')))
+            richer = job if quality(job)>quality(previous) else previous
             other = previous if richer is job else job
             result={**other,**richer}
             result['locations']=list(dict.fromkeys(previous.get('locations',[])+job.get('locations',[])))
@@ -135,22 +236,10 @@ def evaluate(job, profile, now):
     years=required_years(desc)
     if years is not None and years > settings.MAX_REQUIRED_YEARS:
         return None  # Entry-level wording never cancels an explicit requirement.
-    p=PROFILES[profile]
-    has_role=any(has_word(title,n) for n in p['nouns'])
-    title_fit=any(has_word(title,t) for t in p['titles'])
-    title_fit=title_fit or (any(has_word(title,n) for n in p['nouns']) and any(has_word(title,q) for q in p['qualifiers']))
-    if profile=='tech' and re.search(r'\b(sql|sql server|database|business intelligence) (developer|administrator|analyst)\b',title,re.I):
-        title_fit=True
-    if profile=='tech' and job.get('entry_verified') and has_role and job.get('category') in ('Software','Software Engineering','AI/ML/Data','Data Science, AI & Machine Learning'):
-        title_fit=True
-    skills=[s for s in p['skills'] if has_word(desc,s)]
-    if not title_fit and not (profile=='tech' and has_role and len(skills)>=3 and re.search(p['degree_pattern'],desc,re.I)):
+    evidence=role_evidence(job,profile)
+    if evidence is None:
         return None
-    # Business/finance scoring must not admit software roles merely mentioning SQL.
-    if profile=='finance' and re.search(r'\b(engineer|engineering|developer|programmer|scientist|technical staff)\b',title,re.I):
-        return None
-    if profile=='tech' and not title_fit and not re.search(p['degree_pattern'],desc,re.I):
-        return None
+    role_reason,crossover=evidence
     year=settings.GRADUATION_YEAR.get(profile)
     classes=re.findall(r'\bclass of (20\d\d)\b',title+' '+desc,re.I)
     if year and classes and str(year) not in classes:
@@ -167,10 +256,13 @@ def evaluate(job, profile, now):
         return None
     floor=settings.MIN_ANNUAL_SALARY.get(profile)
     salary=job.get('salary') or {}
-    if floor and salary.get('currency')=='USD' and salary.get('period')=='year' and salary.get('max',0) and salary['max']<floor:
+    adzuna=salary.get('source')=='Adzuna' or job.get('source')=='Adzuna'
+    confirmed=salary.get('is_estimate') is not True and (not adzuna or salary.get('is_estimate') is False)
+    if floor and confirmed and salary.get('currency')=='USD' and salary.get('period')=='year' and salary.get('max',0) and salary['max']<floor:
         return None
     preferred=[s for s in settings.PREFERRED_SKILLS.get(profile,()) if has_word(desc,s)]
     reasons=['NY/NJ location' if settings.NY_NJ_ONLY else 'Preferred location']
+    reasons.append(role_reason)
     reasons.append('Entry-level evidence' if known_entry else 'Experience not specified — verify requirements')
     if preferred:
         reasons.append('Skills: '+', '.join(preferred[:5]))
@@ -178,6 +270,26 @@ def evaluate(job, profile, now):
         reasons.append(str(years)+' years required')
     if not job.get('description_complete',False):
         reasons.append('Full requirements unavailable — verify before applying')
-    score=min(100,40+20*bool(title_fit)+20*known_entry+min(15,len(preferred)*3)+5*bool(job.get('description_complete')))
-    result={**job,'locations':locs,'score':score,'reasons':reasons,'required_years':years,'confidence':'strong' if known_entry and job.get('description_complete') else 'review'}
+    complete=bool(job.get('description_complete'))
+    uncertain_degree=role_reason.startswith('Possible crossover')
+    score=min(100,40+20+20*known_entry+min(15,len(preferred)*3)+5*complete)
+    if not complete:
+        score=min(score,60)
+    elif uncertain_degree:
+        score=min(score,70)
+    result={**job,'locations':locs,'score':score,'reasons':reasons,'required_years':years,'crossover':crossover,'confidence':'strong' if known_entry and complete and not uncertain_degree else 'review'}
     return result
+
+
+def match_profiles(jobs, now):
+    """A posting may qualify for both profiles; neither profile consumes it."""
+    matched={profile:[] for profile in PROFILES}
+    for job in jobs:
+        results={profile:result for profile in PROFILES if (result:=evaluate(job,profile,now)) is not None}
+        for profile,result in results.items():
+            result['matching_profiles']=list(results)
+            if len(results)>1:
+                other=next(name for name in results if name!=profile)
+                result['reasons'].append('Also matches '+PROFILES[other]['label'])
+            matched[profile].append(result)
+    return matched

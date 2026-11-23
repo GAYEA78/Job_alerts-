@@ -47,6 +47,27 @@ class State:
                     raise RuntimeError('Invalid legacy history: '+filename)
                 # Old company/title fingerprints are deliberately discarded.
                 p['legacy_urls']=sorted({canonical_url(s) for s in old if isinstance(s,str) and s.startswith(('http://','https://'))}-{''})
+            # Migrate old Adzuna redirect keys without forgetting accepted mail
+            # or application statuses. Distinct ad IDs remain separate jobs.
+            sent={}
+            for url,deliveries in p['sent'].items():
+                target=sent.setdefault(job_key({'url':url}),{})
+                for rid,when in deliveries.items():
+                    target[rid]=max(target.get(rid,0),when)
+            p['sent']=sent
+            applications={}
+            for url,entry in p['applications'].items():
+                key=job_key({'url':url})
+                if entry.get('updated_at',0)>=applications.get(key,{}).get('updated_at',0):
+                    applications[key]=entry
+            p['applications']=applications
+            pending={}
+            for job in p['pending'].values():
+                key=job_key(job)
+                if job.get('last_seen',0)>=pending.get(key,{}).get('last_seen',0):
+                    pending[key]=job
+            p['pending']=pending
+            p['legacy_urls']=sorted({job_key({'url':url}) for url in p['legacy_urls']}-{''})
 
     def save(self):
         atomic_json(self.path,self.data)
@@ -94,7 +115,7 @@ class State:
     def track(self, profile, url, status):
         if status not in ('saved','applied','interviewing','rejected','dismissed','reset'):
             raise ValueError('Unsupported application status')
-        key=canonical_url(url)
+        key=job_key({'url':url})
         if not key:
             raise ValueError('A valid HTTP(S) job URL is required')
         p=self.profile(profile)
